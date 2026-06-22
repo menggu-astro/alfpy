@@ -63,8 +63,8 @@ alfssp_type = [(i,numba.float64[:]) for i in alfssp_type_1darr] +\
 """
 #@jitclass(alfssp_type)
 class ALFSSP(object):    
-    def __init__(self, nl, nage_rfcn, nzmet, nage, nzmet3, 
-                 nimfnp, nimf, nmcut, nhot):
+    def __init__(self, nl, nage_rfcn, nzmet, nage, nzmet3,
+                 nimfnp, nimf, nmcut, nhot, allocate_logsspm=False):
         
         self.lam = np.zeros(nl)
         self.m7g = np.zeros(nl) 
@@ -108,9 +108,12 @@ class ALFSSP(object):
         self.logagegrid = np.zeros(nage)
         self.logzgrid = np.zeros(nzmet)
         self.logzgrid2 = np.zeros(nzmet3) 
-        self.logssp = np.zeros((nl,nimf,nimf,nage,nzmet)) 
-        self.logsspm = np.zeros((nl,nimf,nimf,nage,nmcut,nzmet3)) 
-        self.sspnp = np.zeros((nl,nimfnp,nage,nzmet)) 
+        self.logssp = np.zeros((nl,nimf,nimf,nage,nzmet))
+        if allocate_logsspm:
+            self.logsspm = np.zeros((nl,nimf,nimf,nage,nmcut,nzmet3))
+        else:
+            self.logsspm = np.zeros((1,1,1,1,1,1))
+        self.sspnp = np.zeros((nl,nimfnp,nage,nzmet))
         self.imfx1 =  np.zeros(nimf) 
         self.imfx2 = np.zeros(nimf) 
         self.imfx3 = np.zeros(nmcut) 
@@ -394,7 +397,7 @@ class ALFVAR(object):
         self.params = ALFPARAM()
         self.sspgrid = ALFSSP(self.nl, self.nage_rfcn, self.nzmet, self.nage, \
                               self.nzmet3, self.nimfnp, self.nimf, self.nmcut, \
-                              self.nhot)
+                              self.nhot, allocate_logsspm=(self.imf_type in [2,3]))
         self.data_indx = ALFIDATA(self.nindx)
         self.data = ALFTDATA(self.ndat)
 

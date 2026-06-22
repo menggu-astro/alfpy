@@ -7,6 +7,21 @@ from func import func
 from str2arr import fill_param
 from post_process import calm2l_dynesty
 from alf_build_model import setup_pool
+import multiprocessing as mp
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
+_G_CALCULATOR = None
+
+def _init_worker(calculator):
+    global _G_CALCULATOR
+    _G_CALCULATOR = calculator
+
+def _log_prob_worker(theta):
+    return _G_CALCULATOR.log_prob(theta)
 
 # -------------------------------------------------------- #
 class LogProbCalculator:
@@ -119,9 +134,9 @@ def alf(filename,
     npar = len(use_keys)
     all_key_list = list(tofit_params.keys())
     log_prob_calculator = LogProbCalculator(alfvar, prloarr, prhiarr, all_prior, use_keys)
-    pool = setup_pool(pool_type, ncpu) # Initialize pool
-
     if run == 'emcee' or run == 'emcee_test':
+        pool = mp.get_context("spawn").Pool(
+            processes=ncpu, initializer=_init_worker, initargs=(log_prob_calculator,))
         with pool:
             # Initialize walkers
             pos_emcee_in = np.zeros(shape=(nwalkers, npar))
@@ -158,7 +173,7 @@ def alf(filename,
             if run == 'emcee':
                 # Run emcee
                 sampler = emcee.EnsembleSampler(
-                nwalkers, npar, log_prob_calculator.log_prob, threads=ncpu)
+                nwalkers, npar, _log_prob_worker, pool=pool)
                 sampler.run_mcmc(pos_emcee_in, nburn + nmcmc, progress=True)
 
                 # Save results
@@ -231,14 +246,21 @@ def alf(filename,
     # ---------------------------------------------------------------- #
     elif run == 'dynesty':
         # Run dynesty
-        dsampler = dynesty.NestedSampler(
-                log_prob_calculator.log_prob_nested,
-                log_prob_calculator.prior_transform,
-                npar, nlive = int(50*npar),
-                sample='rslice', bootstrap=0)
-
         tstart = time.time()
-        dsampler.run_nested(dlogz=0.5)
+        if pool_type == 'multiprocessing' and ncpu > 1:
+            with dynesty.pool.Pool(ncpu,
+                                   log_prob_calculator.log_prob_nested,
+                                   log_prob_calculator.prior_transform) as pool:
+                dsampler = dynesty.NestedSampler(pool.loglike, pool.prior_transform,
+                                                 pool=pool, ndim=npar, nlive=int(50*npar),
+                                                 sample='rslice', bootstrap=0)
+                dsampler.run_nested(dlogz=0.5)
+        else:
+            dsampler = dynesty.NestedSampler(log_prob_calculator.log_prob_nested,
+                                             log_prob_calculator.prior_transform,
+                                             ndim=npar, nlive=int(50*npar),
+                                             sample='rslice', bootstrap=0)
+            dsampler.run_nested(dlogz=0.5)
         ndur = time.time() - tstart
         print(f'\n Total time for dynesty {ndur/60./60.:.2f}hrs')
 
