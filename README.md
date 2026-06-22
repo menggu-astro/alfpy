@@ -21,12 +21,26 @@ To run alfpy, you’ll need the following Python packages (I list the version I 
 - multiprocessing
 
 ## Usage Instructions
-1. Define an environment variable `ALFPY_HOME` to `path/alfpy/`
+1. Define environment variables for the model/data resources and the Python run directory. `ALF_HOME` should point to a directory containing the original ALF `infiles/` model grids and filter files, while `ALFPY_HOME` should point to this `alfpy` repository/run directory. If you copy or symlink the original ALF `infiles/` directory into this repository, the two variables can be the same path. Keep trailing slashes because the current scripts concatenate paths directly.
 2. Edit `tofit_parameters.py` to specify the parameters you want to fit and the default values for those not being fitted
-3. With `<filename>.dat` placed in `alf/indata/`, run the following command to build the model:
- `python alf_build_model.py <filename> <tag>`
-4. To start fitting the model, run:
+3. With `<filename>.dat` placed in `alf/indata/`, run the following command to build the model and fit it:
 `python alf.py <filename> <tag>`
+
+Each `<filename>.dat` has 5 whitespace columns — wavelength [Å], flux, error, weight (`0` masks the pixel), instrumental σ [km/s] — preceded by `#`-header line(s) giving the fit interval(s) in μm, e.g. `# 0.40 0.47`.
+
+## Outputs
+Results are written under `$ALFPY_HOME/`:
+- **emcee** (`results_emcee/`): `res_emcee_<file>_<tag>.p` (chain, array `(nstep, nwalker, npar)`), `prob_emcee_*.p` (log-probability), `bestspec_*.dat` (best-fit model spectrum).
+- **dynesty** (`results_dynesty/`): `res_dynesty_<file>_<tag>.p` (raw, importance-weighted results object). With `nested_post_process=True`, also `res_dynesty_*.hdf5` holding equal-weight `samples_eq`, posterior `mean`/`cov`, and `m2l` (mass-to-light).
+
+```python
+import pickle, h5py
+chain = pickle.load(open("results_emcee/res_emcee_<file>_<tag>.p", "rb"))   # emcee: (nstep, nwalker, npar)
+with h5py.File("results_dynesty/res_dynesty_<file>_<tag>.hdf5") as f:        # dynesty (post-processed)
+    samples, m2l = f["samples_eq"][:], f["m2l"][:]
+```
+
+`post_process.alfres` wraps loading + percentiles (full-parameter fits).
 
 ## Citation
 If __alfpy__ is helpful in your work, please kindly cite this GitHub repository, as well as all the relevant citations for the original [__alf__](https://github.com/cconroy20/alf/tree/master/src) which are mentioned in its documentation.
