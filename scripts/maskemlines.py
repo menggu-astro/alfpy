@@ -22,7 +22,7 @@ def maskemlines(alfvar, zred, sigma):
     #    if alfvar.data.lam[i] >= wavel[j] and data.lam[i] <= waveh[j]:
     for j in range(alfvar.neml):
         index = np.logical_and(alfvar.data.lam >= wavel[j], 
-                               alfvar.data.lam <= waveh[j]):
+                               alfvar.data.lam <= waveh[j])
         alfvar.data.wgt[index] = huge_number
         alfvar.data.err[index] = huge_number
     

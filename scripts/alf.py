@@ -1,12 +1,19 @@
-import os, sys, pickle, numpy as np
+import os, sys, copy, pickle, numpy as np
 import matplotlib.pyplot as plt
 import emcee, time
 import dynesty
 from tofit_parameters import tofit_params
 from func import func
-from str2arr import fill_param
+from str2arr import fill_param, str2arr
 from post_process import calm2l_dynesty
-from alf_build_model import setup_pool
+from alf_vars import ALFVAR
+from alf_constants import tiny_number
+from priors import TopHat, ClippedNormal
+from read_data import read_data
+from linterp import locate, linterp
+from setup import setup
+from set_pinit_priors import set_pinit_priors
+from scipy.optimize import differential_evolution
 import multiprocessing as mp
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -24,6 +31,252 @@ def _log_prob_worker(theta):
     return _G_CALCULATOR.log_prob(theta)
 
 # -------------------------------------------------------- #
+def func_2min(inarr):
+    """Minimization function for the first 4 parameters."""
+    return func(global_alfvar,
+                inarr,
+                use_keys[:len(inarr)],
+                prhiarr=global_prhiarr,
+                prloarr=global_prloarr,
+               )
+
+# -------------------------------------------------------- #
+def build_alf_model(filename, tag='', pool_type='multiprocessing'):
+    """
+    Build an ALFVAR model based on the specified input file.
+    Parameters:
+        - filename: Name of the input file.
+        - tag: Tag for the output file.
+        - pool_type: Multiprocessing or MPI pool type.
+    - based on [alf.f90](https://github.com/cconroy20/alf/blob/master/src/alf.f90)
+    """
+    ALFPY_HOME = os.environ['ALFPY_HOME']
+    for ifolder in ['results_emcee', 'results_dynesty', 'subjobs']:
+        if os.path.exists(ALFPY_HOME + ifolder) is not True:
+            os.makedirs(ALFPY_HOME + ifolder)
+
+    alfvar = ALFVAR()
+    global use_keys
+    use_keys = [k for k, (v1, v2) in tofit_params.items() if v1 == True]
+
+    #---------------------------------------------------------------!
+    #---------------------------Setup-------------------------------!
+    #---------------------------------------------------------------!
+    alfvar.fit_indices = 0  #flag specifying if fitting indices or spectra
+
+    # ---- flag determining the level of complexity
+    # ---- 0=full, 1=simple, 2=super-simple.  See sfvars for details
+    alfvar.fit_type = 0  # do not change; use use_keys to specify parameters
+
+    # ---- fit h3 and h4 parameters
+    alfvar.fit_hermite = 0
+
+    # ---- type of IMF to fit
+    # ---- 0=1PL, 1=2PL, 2=1PL+cutoff, 3=2PL+cutoff, 4=non-parametric IMF
+    alfvar.imf_type = 1
+
+    # ---- are the data in the original observed frame?
+    alfvar.observed_frame = 0
+    alfvar.mwimf = 0  #force a MW (Kroupa) IMF
+
+    if alfvar.mwimf:
+        alfvar.imf_type = 1
+
+    # ---- fit two-age SFH or not?  (only considered if fit_type=0)
+    alfvar.fit_two_ages = 1
+
+    # ---- IMF slope within the non-parametric IMF bins
+    # ---- 0 = flat, 1 = Kroupa, 2 = Salpeter
+    alfvar.nonpimf_alpha = 2
+
+    # ---- turn on/off the use of an external tabulated M/L prior
+    alfvar.extmlpr = 0
+
+    # ---- set initial params, step sizes, and prior ranges
+    _, prlo, prhi = set_pinit_priors(alfvar.imf_type)
+
+    # ---- change the prior limits to kill off these parameters
+    prhi.logm7g = -5.0
+    prhi.teff   =  2.0
+    prlo.teff   = -2.0
+
+    # ---- mass of the young component should always be sub-dominant
+    prhi.logfy = -0.5
+
+    # ---------------------------------------------------------------!
+    # --------------Do not change things below this line-------------!
+    # ---------------unless you know what you are doing--------------!
+    # ---------------------------------------------------------------!
+    # ---- regularize non-parametric IMF (always do this)
+    alfvar.nonpimf_regularize = 1
+
+    # ---- dont fit transmission function in cases where the input
+    # ---- spectrum has already been de-redshifted to ~0.0
+    if alfvar.observed_frame == 0 or alfvar.fit_indices == 1:
+        alfvar.fit_trans = 0
+        prhi.logtrans = -5.0
+        prhi.logsky   = -5.0
+    else:
+        alfvar.fit_trans = 1
+
+    # ---- extra smoothing to the transmission spectrum.
+    # ---- if the input data has been smoothed by a gaussian
+    # ---- in velocity space, set the parameter below to that extra smoothing
+    alfvar.smooth_trans = 0.0
+
+    if (alfvar.ssp_type == 'cvd'):
+        # ---- always limit the [Z/H] range for CvD since
+        # ---- these models are actually only at Zsol
+        prhi.zh =  0.01
+        prlo.zh = -0.01
+        if (alfvar.imf_type > 1):
+            print('ALF ERROR, ssp_type=cvd but imf>1')
+
+    if alfvar.fit_type in [1,2]:
+        alfvar.mwimf=1
+
+    #---------------------------------------------------------------!
+
+    if filename is None:
+        print('ALF ERROR: You need to specify an input file')
+        teminput = input("Name of the input file: ")
+        if len(teminput.split(' '))==1:
+            filename = teminput
+        elif len(teminput.split(' '))>1:
+            filename = teminput[0]
+            tag = teminput[1]
+
+
+    # ---- write some important variables to screen
+    print(" ************************************")
+    if alfvar.fit_indices == 1:
+        print(" ***********Index Fitter*************")
+    else:
+        print(" **********Spectral Fitter***********")
+    print(" ************************************")
+    print("   ssp_type  =", alfvar.ssp_type)
+    print("   fit_type  =", alfvar.fit_type)
+    print("   imf_type  =", alfvar.imf_type)
+    print(" fit_hermite =", alfvar.fit_hermite)
+    print("fit_two_ages =", alfvar.fit_two_ages)
+    if alfvar.imf_type == 4:
+        print("   nonpimf   =", alfvar.nonpimf_alpha)
+    print("  obs_frame  =",  alfvar.observed_frame)
+    print("      mwimf  =",  alfvar.mwimf)
+    print("  age-dep Rf =",  alfvar.use_age_dep_resp_fcns)
+    print("    Z-dep Rf =",  alfvar.use_z_dep_resp_fcns)
+    #print("  Ncores     = ",  ntasks)
+    print("  filename   = ",  filename, ' ', tag)
+    print(" ************************************")
+    #print('\n\nStart Time ',datetime.now())
+
+    #---------------------------------------------------------------!
+
+    # ---- read in the data and wavelength boundaries
+    alfvar.filename = filename
+    alfvar.tag = tag
+
+    if alfvar.fit_indices == 0:
+        alfvar = read_data(alfvar)
+        # ---- read in the SSPs and bandpass filters
+        # ------- setting up model arry with given imf_type ---- #
+
+        pool = setup_pool(pool_type)
+
+        print('\nsetting up model arry with given imf_type and input data\n')
+        tstart = time.time()
+        alfvar = setup(alfvar, onlybasic = False, pool = pool)
+        #alfvar = setup(alfvar, onlybasic = True, pool = pool)  # use onlybasic for test purpose
+        ndur = time.time() - tstart
+        print('\n Total time for setup {:.2f}min'.format(ndur/60))
+
+
+        ## ---- This part requires alfvar.sspgrid.lam ---- ##
+        lam = np.copy(alfvar.sspgrid.lam)
+        # ---- interpolate the sky emission model onto the observed wavelength grid
+        # ---- moved to read_data
+        if alfvar.observed_frame == 1:
+            alfvar.data.sky = linterp(alfvar.lsky, alfvar.fsky, alfvar.data.lam)
+            alfvar.data.sky[alfvar.data.sky<0] = 0.
+        else:
+            alfvar.data.sky[:] = tiny_number
+        alfvar.data.sky[:] = tiny_number  # ?? why?
+
+        # ---- we only compute things up to 500A beyond the input fit region
+        alfvar.nl_fit = min(max(locate(lam, alfvar.l2[-1]+500.0),0),alfvar.nl-1)
+        ## ---- define the log wavelength grid used in velbroad.f90
+        alfvar.dlstep = (np.log(alfvar.sspgrid.lam[alfvar.nl_fit])-
+                         np.log(alfvar.sspgrid.lam[0]))/(alfvar.nl_fit+1)
+
+        for i in range(alfvar.nl_fit):
+            alfvar.lnlam[i] = i*alfvar.dlstep + np.log(alfvar.sspgrid.lam[0])
+
+
+    # ---- convert the structures into their equivalent arrays
+    prloarr = str2arr(switch=1, instr = prlo)
+    prhiarr = str2arr(switch=1, instr = prhi)
+
+    # ---- this is the master process
+    # ---- estimate velz ---- #
+    print("  Fitting ",alfvar.nlint," wavelength intervals")
+    nlint = alfvar.nlint
+    l1, l2 = alfvar.l1, alfvar.l2
+    print('wavelength bourdaries: ', l1, l2)
+    if l2[-1]>np.nanmax(lam) or l1[0]<np.nanmin(lam):
+        print('ERROR: wavelength boundaries exceed model wavelength grid')
+        print(l2[nlint-1],lam[nl-1],l1[0],lam[0])
+
+    global global_alfvar, global_prloarr, global_prhiarr
+    global_alfvar = copy.deepcopy(alfvar)
+    global_prloarr = copy.deepcopy(prloarr)
+    global_prhiarr = copy.deepcopy(prhiarr)
+    # ---- optimize the first four parameters
+    # ---- using differential evolution
+    # ---- then shrink the prior based on the optimization results
+    # ---- although the updated prior range has not been extensively tested
+    de_keys = ['velz', 'sigma', 'logage', 'zh']
+    len_optimize = len(de_keys)
+    all_key_list = list(tofit_params.keys())
+    prloarr_usekeys = np.array([global_prloarr[i_] for i_, k_ in enumerate(all_key_list) if k_ in use_keys])
+    prhiarr_usekeys = np.array([global_prhiarr[i_] for i_, k_ in enumerate(all_key_list) if k_ in use_keys])
+
+    print('will narrow prior for the following four parameters: \n', use_keys[:len_optimize])
+    prior_bounds = list(zip(prloarr_usekeys[:len_optimize], prhiarr_usekeys[:len_optimize]))
+    print(f'prior_bounds for the first four parameters: {prior_bounds}\n')
+
+    optimize_res = differential_evolution(
+        func_2min,
+        bounds = prior_bounds,
+        disp=True,
+        polish=False,
+        updating='deferred',
+        workers=1)
+    print('optimized parameters', optimize_res)
+
+    # ---- Update priors based on the optimization results
+    prrange = [10, 10, 0.1, 0.1]  # Assumed range adjustments
+
+    global_all_prior = [ClippedNormal(
+        np.array(optimize_res.x)[i], prrange[i],
+        global_prloarr[i],
+        global_prhiarr[i]) for i in range(len_optimize)] + [
+            TopHat(global_prloarr[i+len_optimize],
+                          global_prhiarr[i+len_optimize]) for i in range(len(all_key_list)-len_optimize)]
+
+    pool.close()
+    return [alfvar, prloarr, prhiarr, global_all_prior, optimize_res.x]
+
+
+# -------- #
+def setup_pool(pool_type, ncpu=4):
+    """Set up the multiprocessing pool."""
+    if pool_type == 'multiprocessing':
+        import multiprocessing
+        return multiprocessing.Pool(processes=ncpu)
+    raise ValueError(f"unsupported pool_type {pool_type!r}; only 'multiprocessing' is supported")
+
+
+# -------------------------------------------------------- #
 class LogProbCalculator:
     """
     use a class instead of relying on global variables
@@ -38,8 +291,8 @@ class LogProbCalculator:
 
     def log_prob(self, inarr):
         """Log-probability function for emcee."""
-        log_p = func(self.alfvar, 
-                     inarr, 
+        log_p = func(self.alfvar,
+                     inarr,
                      self.keys,
                      prhiarr=self.prhiarr,
                      prloarr=self.prloarr)
@@ -49,15 +302,14 @@ class LogProbCalculator:
 
     def log_prob_nested(self, posarr):
         """Log-probability function for dynesty."""
-        ln_prior = self.lnprior(posarr)
-        if not np.isfinite(ln_prior):
-            return -np.inf
-        res_ = func(self.alfvar, 
-                    posarr, 
-                    usekeys=self.keys, 
+        res_ = func(self.alfvar,
+                    posarr,
+                    usekeys=self.keys,
                     prhiarr=self.prhiarr,
                     prloarr=self.prloarr)
-        return ln_prior - 0.5 * res_
+        if not np.isfinite(res_):
+            return -np.inf
+        return -0.5 * res_
 
 
     def prior_transform(self, unit_coords):
@@ -83,16 +335,17 @@ class LogProbCalculator:
 
 
 # -------------------------------------------------------- #
-def alf(filename, 
-        tag='', 
-        nwalkers = 128, 
-        nburn = 500, 
+def alf(filename,
+        tag='',
+        nwalkers = 128,
+        nburn = 500,
         nmcmc = 100,
-        run='dynesty', 
-        pool_type='multiprocessing', 
-        emcee_save_chains = False, 
-        ncpu=1, 
-        nested_post_process=False):
+        run='dynesty',
+        pool_type='multiprocessing',
+        emcee_save_chains = False,
+        ncpu=1,
+        nested_post_process=False,
+        model=None):
     """
     Main function to perform ALF fitting using either emcee or dynesty.
     - based on alf.f90, `https://github.com/cconroy20/alf/blob/master/src/alf.f90`
@@ -119,15 +372,7 @@ def alf(filename,
     # To Do: let the Fe-peak elements track Fe in simple mode
     """
     ALFPY_HOME = os.environ['ALFPY_HOME']
-    pickle_model_name = f"{ALFPY_HOME}alfvar_models/alfvar_model_{filename}_{tag}.p"
-
-    # Load model
-    try:
-        print(f"loading pickle file {pickle_model_name}")
-        alfvar, prloarr, prhiarr, all_prior, optimize_res_x = pickle.load(open(pickle_model_name, "rb" ))
-    except:
-        print(f'Cannot find model_arr at {pickle_model_name}. Please run alf_build_model first.')
-        return 
+    alfvar, prloarr, prhiarr, all_prior, optimize_res_x = model
 
     # Initialize log probability calculator
     use_keys = [k for k, (v1, v2) in tofit_params.items() if v1 == True]
@@ -145,20 +390,20 @@ def alf(filename,
                 if i < 4:
                     min_ = max(prloarr[i], np.array(optimize_res_x)[i] - prrange[i])
                     max_ = min(prhiarr[i], np.array(optimize_res_x)[i] + prrange[i])
-                    pos_emcee_in[:, i] = np.array([np.random.uniform(min_, max_, nwalkers)])                
+                    pos_emcee_in[:, i] = np.array([np.random.uniform(min_, max_, nwalkers)])
                 else:
                     tem_prior = np.take(all_prior, all_key_list.index(use_keys[i]))
                     print(tem_prior.range[0], tem_prior.range[1])
                     pos_emcee_in[:, i] = np.array([np.random.uniform(tem_prior.range[0], tem_prior.range[1], nwalkers)])
-                
+
             print(pos_emcee_in[0])
             print(f'Initializing emcee with nwalkers={nwalkers}, npar={npar}')
             print(f"Shape of initialized positions: {pos_emcee_in.shape}")
             print(f"Mean positions across walkers: {np.nanmean(pos_emcee_in, axis=0)}")
             print(f"Min positions across walkers: {np.nanmin(pos_emcee_in, axis=0)}")
             print(f"Max positions across walkers: {np.nanmax(pos_emcee_in, axis=0)}")
-            print("try func on mean initial values:", 
-                  func(alfvar, np.nanmean(pos_emcee_in, axis=0), 
+            print("try func on mean initial values:",
+                  func(alfvar, np.nanmean(pos_emcee_in, axis=0),
                        use_keys,
                        prhiarr=prhiarr,
                        prloarr=prloarr))
@@ -180,7 +425,7 @@ def alf(filename,
                 print(f'mean acc fraction {np.nanmean(sampler.acceptance_fraction):.3f}')
                 ndur = time.time() - tstart
                 print(f'\n Total time for emcee {ndur/60:.2f}min')
-                res = sampler.get_chain(discard = nburn) 
+                res = sampler.get_chain(discard = nburn)
                 prob = sampler.get_log_prob(discard = nburn)
 
             # ---------------------------------------------------------------- #
@@ -197,7 +442,7 @@ def alf(filename,
                     # use the tau (without discarding) to determine how much to remove
                     tau = sampler.get_autocorr_time(discard=int(np.max(old_tau)) if \
                                                 np.all(np.isfinite(old_tau)) else 0,
-                                                tol=0) 
+                                                tol=0)
 
                     print(f'iter = {it}, ' +
                       f"tau = {np.max(tau):.0f}, " +
@@ -239,8 +484,8 @@ def alf(filename,
             best_params = res[np.where(prob == prob.max())][0]
             _, best_mspec = func(alfvar, best_params, use_keys, funit=True)
             np.savetxt(f'{ALFPY_HOME}results_emcee/bestspec_{filename}_{tag}.dat',
-                       np.transpose(best_mspec), 
-                       delimiter="     ", 
+                       np.transpose(best_mspec),
+                       delimiter="     ",
                        fmt='   %12.4f   %12.4E   %12.4E   %12.4E   %12.4E   %12.4E')
             pool.close()
     # ---------------------------------------------------------------- #
@@ -268,11 +513,11 @@ def alf(filename,
         results = dsampler.results
         pickle.dump(results, open(f'{ALFPY_HOME}results_dynesty/res_dynesty_{filename}_{tag}.p', "wb"))
         print('Dynesty run complete.')
-            
+
         # ---- post process ---- #
         if nested_post_process:
             results = pickle.load(open(f'{ALFPY_HOME}results_dynesty/res_dynesty_{filename}_{tag}.p', "rb" ))
-            calm2l_dynesty(results, alfvar, use_keys=use_keys, 
+            calm2l_dynesty(results, alfvar, use_keys=use_keys,
                                outname=f"{filename}_{tag}")
 
 
@@ -285,9 +530,12 @@ if __name__ == "__main__":
     argv_l = sys.argv
     n_argv = len(argv_l)
     filename = argv_l[1]
-    tag = argv_l[2] if n_argv >= 2 else ''
-    # pool_type: multiprocessing or emcee
-    alf(filename, tag, 
-        run = "dynesty", 
-        pool_type = "multiprocessing", 
-        ncpu=8)
+    tag = argv_l[2] if n_argv >= 3 else ''
+
+    pool_type = "multiprocessing"
+    model = build_alf_model(filename, tag, pool_type=pool_type)
+    alf(filename, tag,
+        run = "emcee",
+        pool_type = pool_type,
+        ncpu=8,
+        model=model)

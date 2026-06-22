@@ -11,7 +11,7 @@ ALF_HOME = os.environ['ALF_HOME']
 #                           delim_whitespace=True, header=None, comment='#'))
 f15 = np.loadtxt(f'{ALF_HOME}infiles/filters.dat', comments='#')
 
-@jit(nopython=True)
+#@jit(nopython=True)
 def getm2l(lam, spec, pos, 
            #alfvar, 
            nstart=100, nend=10566, nfil=3, imf_type=3, 

@@ -330,7 +330,7 @@ def setup(alfvar, onlybasic = False, pool=None):
         # ---- read in template error function (computed from SDSS stacks)
         # ---- NB: this hasn't been used in years!
         print( 'WARNING: this option has not been tested in a long time!!')
-        f28 = np.loadtxt('{1}infiles/temperrfcn.s350'.format(ALF_HOME))
+        f28 = np.loadtxt('{0}infiles/temperrfcn.s350'.format(ALF_HOME))
         alfvar.sspgrid.temperrfcn[:] = f28[alfvar.nstart-1:alfvar.nend:,1]
 
     #-------------------------------------------------------------------------!
@@ -508,5 +508,4 @@ def setup(alfvar, onlybasic = False, pool=None):
     alfvar.indxcat[5] = np.array([8577.0,8577.0,8725.0])
 
     return alfvar
-
 
