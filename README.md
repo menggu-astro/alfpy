@@ -21,7 +21,7 @@ To run alfpy, you’ll need the following Python packages (I list the version I 
 - multiprocessing
 
 ## Usage Instructions
-1. Define environment variables for the model/data resources and the Python run directory. `ALF_HOME` should point to a directory containing the original ALF `infiles/` model grids and filter files, while `ALFPY_HOME` should point to this `alfpy` repository/run directory. If you copy or symlink the original ALF `infiles/` directory into this repository, the two variables can be the same path. Keep trailing slashes because the current scripts concatenate paths directly.
+1. Define environment variables for the model/data resources and the Python run directory. `ALF_HOME` should point to a directory containing the original ALF `infiles/` model grids and filter files, while `ALFPY_HOME` should point to this `alfpy` repository/run directory. 
 2. Edit `tofit_parameters.py` to specify the parameters you want to fit and the default values for those not being fitted
 3. With `<filename>.dat` placed in `alf/indata/`, run the following command to build the model and fit it:
 `python alf.py <filename> <tag>`
