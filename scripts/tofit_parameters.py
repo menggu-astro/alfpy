@@ -33,7 +33,7 @@ tofit_params = {
     'euh': (False, 0.0),
     # -------------------------------- #
     'teff': (False, 0.0), #23, # killed off in alf.f90
-    'imf1': (False, 1.3), 
+    'imf1': (False, 2.3), 
     'imf2': (False, 2.3), 
     'logfy': (False, -5.9), 
     'sigma2': (False, 10.1),

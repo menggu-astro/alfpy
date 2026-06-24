@@ -376,22 +376,6 @@ class LogProbCalculator:
         res_ = np.array([self.all_prior[all_key_list.index(ikey)].unit_transform(unit_coords[i]) for i, ikey in enumerate(self.keys)])
         return res_
 
-
-    def lnprior(self, in_arr):
-        """
-        Log-prior function for dynesty.
-        - INPUT: npar arr (same length as use_keys)
-        - all_priors: priors for all 46 parameter
-        """
-        full_arr = fill_param(in_arr, self.keys)
-        lnp = 0.0
-        for i in range(len(self.all_prior)):
-            lnp += self.all_prior[i].lnp(full_arr[i])
-        #lnp = sum([self.all_prior[i_].lnp(iarr_) for i_, iarr_ in enumerate(full_arr)])
-        return lnp if np.isfinite(lnp) else -np.inf
-        #return 0 if np.isfinite(lnp) else lnp
-
-
 # -------------------------------------------------------- #
 def alf(filename,
         tag='',
@@ -531,7 +515,7 @@ if __name__ == "__main__":
     pool_type = "multiprocessing"
     model = build_alf_model(filename, tag, pool_type=pool_type)
     alf(filename, tag,
-        run = "emcee",
+        run = "dynesty",
         pool_type = pool_type,
         ncpu=8,
         model=model)
