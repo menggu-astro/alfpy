@@ -131,7 +131,7 @@ def build_alf_model(filename, tag='', pool_type='multiprocessing', run_de=False)
 
     # ---- type of IMF to fit
     # ---- 0=1PL, 1=2PL, 2=1PL+cutoff, 3=2PL+cutoff, 4=non-parametric IMF
-    alfvar.imf_type = 2
+    alfvar.imf_type = 1
 
     # ---- are the data in the original observed frame?
     alfvar.observed_frame = 0
