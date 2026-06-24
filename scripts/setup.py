@@ -220,7 +220,7 @@ def setup(alfvar, onlybasic = False, pool=None):
             alfvar.nzmet3,
         ))
     
-    if alfvar.imf_type == 3:
+    if alfvar.imf_type in [2, 3]:
         print('\nread in 3 parameter IMF models, t, m, z for charm[m],chart[t],charz[z+2]:')
         for (t, m, z), _ in np.ndenumerate(alfvar.sspgrid.logsspm[0,0,0]):
             filename = "{0}infiles/VCJ_v8_mcut{1}_{2}_Z{3}"\
@@ -471,7 +471,7 @@ def setup(alfvar, onlybasic = False, pool=None):
 
         # ---- smooth the 3-part IMF models ---- #
         print('-------- smooth the 3-part IMF models')
-        if alfvar.imf_type == 3:
+        if alfvar.imf_type in [2, 3]:
             index_list = [(k, j, t, m, z) for (k, j, t, m, z), _ in np.ndenumerate(alfvar.sspgrid.logsspm[0])]
             temarr = pool.map(pwork, [alfvar.sspgrid.logsspm[:,k,j,t,m,z] for (k, j, t, m, z), _ in np.ndenumerate(alfvar.sspgrid.logsspm[0])] )
             for ii, (k, j, t, m, z) in enumerate(index_list):
@@ -517,4 +517,3 @@ def setup(alfvar, onlybasic = False, pool=None):
     alfvar.indxcat[5] = np.array([8577.0,8577.0,8725.0])
 
     return alfvar
-

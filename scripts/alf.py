@@ -38,6 +38,8 @@ def _save_emcee_text_outputs(ALFPY_HOME, filename, tag, alfvar, use_keys, res, p
     outstem = filename if tag == "" else f"{filename}_{tag}"
     pos2d = res.reshape(res.shape[0] * res.shape[1], res.shape[2])
     prob1d = prob.reshape(prob.shape[0] * prob.shape[1])
+    if not np.isfinite(prob1d).any():
+        raise RuntimeError("No finite emcee samples; check initial likelihood, priors, and fixed parameter defaults.")
     chi2 = -2.0 * prob1d
     posfull = np.array([fill_param(irow, use_keys) for irow in pos2d])
     chunksize = max(1, len(pos2d) // (max(1, ncpu) * 8))
@@ -129,7 +131,7 @@ def build_alf_model(filename, tag='', pool_type='multiprocessing', run_de=False)
 
     # ---- type of IMF to fit
     # ---- 0=1PL, 1=2PL, 2=1PL+cutoff, 3=2PL+cutoff, 4=non-parametric IMF
-    alfvar.imf_type = 1
+    alfvar.imf_type = 2
 
     # ---- are the data in the original observed frame?
     alfvar.observed_frame = 0
@@ -150,6 +152,9 @@ def build_alf_model(filename, tag='', pool_type='multiprocessing', run_de=False)
 
     # ---- set initial params, step sizes, and prior ranges
     _, prlo, prhi = set_pinit_priors(alfvar.imf_type)
+    if alfvar.imf_type == 2:
+        if tofit_params.get('imf2', (False, None))[0]:
+            raise ValueError("For imf_type=2, fit imf1 and imf3; imf2 is tied to imf1 and is not used.")
 
     # ---- change the prior limits to kill off these parameters
     prhi.logm7g = -5.0
@@ -515,7 +520,7 @@ if __name__ == "__main__":
     pool_type = "multiprocessing"
     model = build_alf_model(filename, tag, pool_type=pool_type)
     alf(filename, tag,
-        run = "dynesty",
+        run = "emcee",
         pool_type = pool_type,
         ncpu=8,
         model=model)

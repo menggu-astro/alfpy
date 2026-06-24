@@ -56,10 +56,8 @@ def set_pinit_priors(imf_type=1):
         pos.imf1 = random.random()*1.0 + 0.5
         pos.imf3 = random.random()*1.0
 
-    if imf_type in [0, 1, 3]:
+    if imf_type in [0, 1, 2, 3]:
         pos.imf2 = random.random()*1.5-0.75 + 2.0
-    elif imf_type == 2:
-        pos.imf2 = random.random()*0.1 + 0.1
     elif imf_type == 4:
         pos.imf2 = random.random()*0.5+0.5
 
@@ -123,13 +121,9 @@ def set_pinit_priors(imf_type=1):
         prhi.imf1 = 3.0
         prhi.imf3 = 3.0
 
-    if imf_type in [0, 1, 3]:
+    if imf_type in [0, 1, 2, 3]:
         prlo.imf2 = 0.5
         prhi.imf2 = 3.5
-
-    elif imf_type == 2:
-        prlo.imf2 = 0.08
-        prhi.imf2 = 0.5
 
     elif imf_type == 4:
         prlo.imf2 = -5.0
@@ -139,5 +133,4 @@ def set_pinit_priors(imf_type=1):
     prhi.imf4 = 3.0
 
     return pos, prlo, prhi
-
 
