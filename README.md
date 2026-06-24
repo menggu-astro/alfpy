@@ -11,14 +11,6 @@ I thank Charlie Conroy for his guidance on alf since the very beginning and shar
 - Performance: The code has been partially accelerated using numba, and parallelized with multiprocessing.
 - Dependencies: __alfpy__ requires all the models from the original __alf__ project, located under `alf/infiles/`.
 
-## Installation and Requirements
-To run alfpy, you’ll need the following Python packages (I list the version I use)
-- numpy (1.26.4)
-- numba (0.60.0)
-- pickle
-- emcee (3.1.6)
-- dynesty (2.1.4)
-- multiprocessing
 
 ## Usage Instructions
 1. Define environment variables for the model/data resources and the Python run directory. `ALF_HOME` should point to a directory containing the original ALF `infiles/` model grids and filter files, while `ALFPY_HOME` should point to this `alfpy` repository/run directory. 
