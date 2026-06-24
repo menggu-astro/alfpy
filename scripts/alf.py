@@ -2,7 +2,6 @@ import os, sys, copy, pickle, numpy as np
 import matplotlib.pyplot as plt
 import emcee, time
 import dynesty
-from functools import partial
 from tofit_parameters import tofit_params
 from func import func
 from str2arr import fill_param, str2arr
@@ -31,6 +30,9 @@ def _init_worker(calculator):
 def _log_prob_worker(theta):
     return _G_CALCULATOR.log_prob(theta)
 
+def _m2l_worker(theta):
+    return worker_m2l(_G_CALCULATOR.alfvar, _G_CALCULATOR.keys, theta)
+
 def _save_emcee_text_outputs(ALFPY_HOME, filename, tag, alfvar, use_keys, res, prob, prloarr, prhiarr, nwalkers, nburn, nmcmc, ncpu, acceptance_fraction, elapsed_seconds, pool=None):
     outdir = f"{ALFPY_HOME}results_emcee"
     outstem = filename if tag == "" else f"{filename}_{tag}"
@@ -38,9 +40,8 @@ def _save_emcee_text_outputs(ALFPY_HOME, filename, tag, alfvar, use_keys, res, p
     prob1d = prob.reshape(prob.shape[0] * prob.shape[1])
     chi2 = -2.0 * prob1d
     posfull = np.array([fill_param(irow, use_keys) for irow in pos2d])
-    pwork = partial(worker_m2l, alfvar, use_keys)
     chunksize = max(1, len(pos2d) // (max(1, ncpu) * 8))
-    m2l = np.array(pool.map(pwork, pos2d, chunksize)) if pool is not None else np.array(list(map(pwork, pos2d)))
+    m2l = np.array(pool.map(_m2l_worker, pos2d, chunksize)) if pool is not None else np.array([worker_m2l(alfvar, use_keys, irow) for irow in pos2d])
     np.savetxt(f"{outdir}/{outstem}.mcmc", np.column_stack([chi2, posfull, m2l]), fmt=["%12.5E"] + ["%11.4f"] * (posfull.shape[1] + m2l.shape[1]))
     ibest = np.nanargmax(prob1d)
     best_params = pos2d[ibest]
@@ -486,6 +487,7 @@ def alf(filename,
     elif run == 'dynesty':
         # Run dynesty
         tstart = time.time()
+        print(f"Fitting parameters: {use_keys}")
         if pool_type == 'multiprocessing' and ncpu > 1:
             with dynesty.pool.Pool(ncpu,
                                    log_prob_calculator.log_prob_nested,

@@ -1,8 +1,8 @@
 Copyright (c) Meng Gu.
 
 This repository contains a Python adaptation of the Absorption Line Fitter
-(ALF), based on the original Fortran ALF by Conroy et al.
+(alf), based on the original Fortran alf by Conroy et al.
 
 This archive is provided for reproducibility of the associated analysis.
 Reuse, redistribution, or relicensing requires permission from the authors
-and appropriate citation of the original ALF papers and ASCL record.
+and appropriate citation of the original alf papers and ASCL record.

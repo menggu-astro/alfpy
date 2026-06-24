@@ -27,10 +27,11 @@ To run alfpy, you’ll need the following Python packages (I list the version I 
 `python alf.py <filename> <tag>`
 
 Each `<filename>.dat` has 5 whitespace columns — wavelength [Å], flux, error, weight (`0` masks the pixel), instrumental σ [km/s] — preceded by `#`-header line(s) giving the fit interval(s) in μm, e.g. `# 0.40 0.47`.
+4. Optional Differential Evolution step.
 
 ## Outputs
 Results are written under `$ALFPY_HOME/`:
-- **emcee** (`results_emcee/`): `res_emcee_<file>_<tag>.p` (chain, array `(nstep, nwalker, npar)`), `prob_emcee_*.p` (log-probability), `bestspec_*.dat` (best-fit model spectrum).
+- **emcee** (`results_emcee/`): `res_emcee_<file>_<tag>.p` (chain, array `(nstep, nwalker, npar)`), `prob_emcee_*.p` (log-probability), usual alf products: `<filename>_<tag>_.mcmc/bestspec/sum`.
 - **dynesty** (`results_dynesty/`): `res_dynesty_<file>_<tag>.p` (raw, importance-weighted results object). With `nested_post_process=True`, also `res_dynesty_*.hdf5` holding equal-weight `samples_eq`, posterior `mean`/`cov`, and `m2l` (mass-to-light).
 
 ```python
@@ -39,8 +40,6 @@ chain = pickle.load(open("results_emcee/res_emcee_<file>_<tag>.p", "rb"))   # em
 with h5py.File("results_dynesty/res_dynesty_<file>_<tag>.hdf5") as f:        # dynesty (post-processed)
     samples, m2l = f["samples_eq"][:], f["m2l"][:]
 ```
-
-`post_process.alfres` wraps loading + percentiles (full-parameter fits).
 
 ## Citation
 If __alfpy__ is helpful in your work, please cite this repository together with the original [__alf__](https://github.com/cconroy20/alf) papers and ASCL entry.
