@@ -107,7 +107,7 @@ def build_alf_model(filename, tag='', pool_type='multiprocessing', run_de=False)
     - based on [alf.f90](https://github.com/cconroy20/alf/blob/master/src/alf.f90)
     """
     ALFPY_HOME = os.environ['ALFPY_HOME']
-    for ifolder in ['results_emcee', 'results_dynesty', 'subjobs']:
+    for ifolder in ['results_emcee', 'results_dynesty']:
         if os.path.exists(ALFPY_HOME + ifolder) is not True:
             os.makedirs(ALFPY_HOME + ifolder)
 
