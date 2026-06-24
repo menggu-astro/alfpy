@@ -209,13 +209,22 @@ def setup(alfvar, onlybasic = False, pool=None):
     # ---- read in 3 parameter IMF models ---- #
     # ---- LINE 247 in setup.f90 ---- #
     # ---- VCJ_v8_mcut{1}_{2}_Z{3}.ssp.imf_varydoublex.s100 ---- #
+
+    if alfvar.imf_type in [2, 3] and alfvar.sspgrid.logsspm.shape[0] == 1:
+        alfvar.sspgrid.logsspm = np.zeros((
+            alfvar.nl,
+            alfvar.nimf,
+            alfvar.nimf,
+            alfvar.nage,
+            alfvar.nmcut,
+            alfvar.nzmet3,
+        ))
     
     if alfvar.imf_type == 3:
         print('\nread in 3 parameter IMF models, t, m, z for charm[m],chart[t],charz[z+2]:')
         for (t, m, z), _ in np.ndenumerate(alfvar.sspgrid.logsspm[0,0,0]):
             filename = "{0}infiles/VCJ_v8_mcut{1}_{2}_Z{3}"\
                        ".ssp.imf_varydoublex.s100".format(ALF_HOME,charm[m],chart[t],charz[z+2])
-            #f22 = np.array(pd.read_csv(filename, delim_whitespace=True, header=None, comment='#'))
             f22 = np.loadtxt(filename, comments='#')
             tmp = f22[alfvar.nstart-1:alfvar.nend, 1:]
             ii=0

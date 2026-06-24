@@ -13,18 +13,18 @@ def write_a_model():
     """
     !write a model to file
     """
-    ALFPY_HOME = os.environ['ALFPY_HOME']  
+    ALFPY_HOME = os.environ['ALFPY_HOME']
     alfvar = ALFVAR()
-    alfvar.imf_type = 3
+    alfvar.imf_type = 1
     alfvar.fit_type = 0
-    
+
     alfvar = setup(alfvar, onlybasic = True)
     nl = alfvar.nl
     pos = alfobj()
- 
+
     #instrumental resolution (<10 -> no broadening)
     ires     = 1.0 #!100.
-    
+
     #!initialize the random number generator
     #np.random.seed()
 
@@ -47,7 +47,7 @@ def write_a_model():
     # ---- !loop to generate multiple mock datasets
     for j in range(1):
         # ---- !string for indexing of filenames
-        file = 'alfpy_kh02.dat'
+        file = 'alfpy_example.dat'
         pos.sigma  = 200.
         s2n  = 100.
         pos.logage = np.log10(10.)
@@ -55,12 +55,12 @@ def write_a_model():
         pos.feh     = 0.0
         pos.ah     = 0.0
         pos.mgh     = 0.0
-        pos.kh   = 0.2000
+        pos.kh   = 0.0
         emnorm     = -5.5
 
-        pos.imf1   = 2.299
-        pos.imf2   = 2.299
-        pos.imf3   = 0.119999
+        pos.imf1   = 2.30
+        pos.imf2   = 2.30
+        pos.imf3   = 0.08
 
         pos.logemline_h    = emnorm
         pos.logemline_oii  = emnorm
@@ -78,21 +78,25 @@ def write_a_model():
         pos.logm7g = -4.0
         pos.logsky = -4.00
         print(pos.__dict__)
-        
+
         # ---- !get a model spectrum
         mspec = getmodel(pos, alfvar = alfvar)
         s2np_arr = np.ones(lam.shape)*s2n*np.sqrt(0.9)
         s2np_arr[lam>=7500] = s2n*np.sqrt(2.5)
         err = mspec/s2np_arr
         gspec = np.random.normal(mspec, err, nl)
- 
+
         #!write model spectrum to file
         header = '0.400 0.470\n0.470 0.560'
         idx = np.logical_and(lam >= lmin, lam<= lmax)
+        print("saving to")
         np.savetxt("{0}models/{1}".format(ALF_HOME, file),
-                   np.transpose([lam[idx], mspec[idx], err[idx], 
-                                 np.ones(lam.shape)[idx], np.ones(idx.sum())*ires]), 
+                   np.transpose([lam[idx], mspec[idx], err[idx],
+                                 np.ones(lam.shape)[idx], np.ones(idx.sum())*ires]),
                    delimiter="     ", fmt='   %12.4f   %12.4E   %12.4E   %12.4f   %12.4f' ,
                    header = header)
-        
+
     return pos
+
+if __name__ == "__main__":
+    write_a_model()

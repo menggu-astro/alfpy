@@ -2,10 +2,11 @@ import os, sys, copy, pickle, numpy as np
 import matplotlib.pyplot as plt
 import emcee, time
 import dynesty
+from functools import partial
 from tofit_parameters import tofit_params
 from func import func
 from str2arr import fill_param, str2arr
-from post_process import calm2l_dynesty
+from post_process import calm2l_dynesty, worker_m2l
 from alf_vars import ALFVAR
 from alf_constants import tiny_number
 from priors import TopHat, ClippedNormal
@@ -30,6 +31,60 @@ def _init_worker(calculator):
 def _log_prob_worker(theta):
     return _G_CALCULATOR.log_prob(theta)
 
+def _save_emcee_text_outputs(ALFPY_HOME, filename, tag, alfvar, use_keys, res, prob, prloarr, prhiarr, nwalkers, nburn, nmcmc, ncpu, acceptance_fraction, elapsed_seconds, pool=None):
+    outdir = f"{ALFPY_HOME}results_emcee"
+    outstem = filename if tag == "" else f"{filename}_{tag}"
+    pos2d = res.reshape(res.shape[0] * res.shape[1], res.shape[2])
+    prob1d = prob.reshape(prob.shape[0] * prob.shape[1])
+    chi2 = -2.0 * prob1d
+    posfull = np.array([fill_param(irow, use_keys) for irow in pos2d])
+    pwork = partial(worker_m2l, alfvar, use_keys)
+    chunksize = max(1, len(pos2d) // (max(1, ncpu) * 8))
+    m2l = np.array(pool.map(pwork, pos2d, chunksize)) if pool is not None else np.array(list(map(pwork, pos2d)))
+    np.savetxt(f"{outdir}/{outstem}.mcmc", np.column_stack([chi2, posfull, m2l]), fmt=["%12.5E"] + ["%11.4f"] * (posfull.shape[1] + m2l.shape[1]))
+    ibest = np.nanargmax(prob1d)
+    best_params = pos2d[ibest]
+    best_chi2 = chi2[ibest]
+    _, best_mspec = func(alfvar, best_params, use_keys, funit=True)
+    np.savetxt(f"{outdir}/{outstem}.bestspec", np.transpose(best_mspec), delimiter="     ", fmt="   %12.4f   %12.4E   %12.4E   %12.4E   %12.4E   %12.4E")
+    combined = np.column_stack([posfull, m2l])
+    zeros_m2l = np.zeros(m2l.shape[1])
+    sum_rows = np.vstack([
+        np.r_[best_chi2, np.nanmean(combined, axis=0)],
+        np.r_[best_chi2, posfull[ibest], zeros_m2l],
+        np.r_[0.0, np.nanstd(combined, axis=0)],
+        np.r_[0.0, np.nanpercentile(combined, 2.5, axis=0)],
+        np.r_[0.0, np.nanpercentile(combined, 16.0, axis=0)],
+        np.r_[0.0, np.nanpercentile(combined, 50.0, axis=0)],
+        np.r_[0.0, np.nanpercentile(combined, 84.0, axis=0)],
+        np.r_[0.0, np.nanpercentile(combined, 97.5, axis=0)],
+        np.r_[0.0, prloarr, zeros_m2l],
+        np.r_[0.0, prhiarr, zeros_m2l],
+    ])
+    header = "\n".join([
+        f"   Elapsed Time: {elapsed_seconds / 3600.0:6.2f} hr",
+        f"    ssp_type  = {alfvar.ssp_type}",
+        f"    fit_type  = {alfvar.fit_type:2d}",
+        f"    imf_type  = {alfvar.imf_type:2d}",
+        f"  fit_hermite = {alfvar.fit_hermite:2d}",
+        f" fit_two_ages = {alfvar.fit_two_ages:2d}",
+        f"     nonpimf  = {alfvar.nonpimf_alpha:2d}",
+        f"   obs_frame  = {alfvar.observed_frame:2d}",
+        f"    fit_poly  = {alfvar.fit_poly:2d}",
+        f"       mwimf  = {alfvar.mwimf:2d}",
+        f"   age-dep Rf = {alfvar.use_age_dep_resp_fcns:2d}",
+        f"     Z-dep Rf = {alfvar.use_z_dep_resp_fcns:2d}",
+        f"   Nwalkers   = {nwalkers:6d}",
+        f"   Nburn      = {nburn:6d}",
+        f"   Nchain     = {nmcmc:6d}",
+        f"   Nsample    = {1:6d}",
+        f"   Nwave      = {alfvar.nl:6d}",
+        f"   Ncores     = {ncpu:6d}",
+        f"   facc: {acceptance_fraction:6.3f}",
+        "   rows: mean posterior, pos(chi^2_min), 1 sigma errors, 2.5%, 16%, 50%, 84%, 97.5% CL, lower priors, upper priors ",
+    ])
+    np.savetxt(f"{outdir}/{outstem}.sum", sum_rows, fmt=["%12.5E"] + ["%11.4f"] * (sum_rows.shape[1] - 1), header=header)
+
 # -------------------------------------------------------- #
 def func_2min(inarr):
     """Minimization function for the first 4 parameters."""
@@ -41,7 +96,7 @@ def func_2min(inarr):
                )
 
 # -------------------------------------------------------- #
-def build_alf_model(filename, tag='', pool_type='multiprocessing'):
+def build_alf_model(filename, tag='', pool_type='multiprocessing', run_de=False):
     """
     Build an ALFVAR model based on the specified input file.
     Parameters:
@@ -240,31 +295,33 @@ def build_alf_model(filename, tag='', pool_type='multiprocessing'):
     prloarr_usekeys = np.array([global_prloarr[i_] for i_, k_ in enumerate(all_key_list) if k_ in use_keys])
     prhiarr_usekeys = np.array([global_prhiarr[i_] for i_, k_ in enumerate(all_key_list) if k_ in use_keys])
 
-    print('will narrow prior for the following four parameters: \n', use_keys[:len_optimize])
     prior_bounds = list(zip(prloarr_usekeys[:len_optimize], prhiarr_usekeys[:len_optimize]))
-    print(f'prior_bounds for the first four parameters: {prior_bounds}\n')
-
-    optimize_res = differential_evolution(
-        func_2min,
-        bounds = prior_bounds,
-        disp=True,
-        polish=False,
-        updating='deferred',
-        workers=1)
-    print('optimized parameters', optimize_res)
-
-    # ---- Update priors based on the optimization results
     prrange = [10, 10, 0.1, 0.1]  # Assumed range adjustments
 
-    global_all_prior = [ClippedNormal(
-        np.array(optimize_res.x)[i], prrange[i],
-        global_prloarr[i],
-        global_prhiarr[i]) for i in range(len_optimize)] + [
-            TopHat(global_prloarr[i+len_optimize],
-                          global_prhiarr[i+len_optimize]) for i in range(len(all_key_list)-len_optimize)]
+    if run_de:
+        print('will narrow prior for the following four parameters: \n', use_keys[:len_optimize])
+        print(f'prior_bounds for the first four parameters: {prior_bounds}\n')
+        optimize_res = differential_evolution(
+            func_2min,
+            bounds = prior_bounds,
+            disp=True,
+            polish=False,
+            updating='deferred',
+            workers=1)
+        print('optimized parameters', optimize_res)
+        optimize_res_x = optimize_res.x
+        global_all_prior = [ClippedNormal(
+            np.array(optimize_res_x)[i], prrange[i],
+            global_prloarr[i],
+            global_prhiarr[i]) for i in range(len_optimize)] + [
+                TopHat(global_prloarr[i+len_optimize],
+                              global_prhiarr[i+len_optimize]) for i in range(len(all_key_list)-len_optimize)]
+    else:
+        optimize_res_x = None
+        global_all_prior = [TopHat(global_prloarr[i], global_prhiarr[i]) for i in range(len(all_key_list))]
 
     pool.close()
-    return [alfvar, prloarr, prhiarr, global_all_prior, optimize_res.x]
+    return [alfvar, prloarr, prhiarr, global_all_prior, optimize_res_x, run_de]
 
 
 # -------- #
@@ -340,9 +397,8 @@ def alf(filename,
         nwalkers = 128,
         nburn = 500,
         nmcmc = 100,
-        run='dynesty',
+        run='emcee',
         pool_type='multiprocessing',
-        emcee_save_chains = False,
         ncpu=1,
         nested_post_process=False,
         model=None):
@@ -372,14 +428,14 @@ def alf(filename,
     # To Do: let the Fe-peak elements track Fe in simple mode
     """
     ALFPY_HOME = os.environ['ALFPY_HOME']
-    alfvar, prloarr, prhiarr, all_prior, optimize_res_x = model
+    alfvar, prloarr, prhiarr, all_prior, optimize_res_x, run_de = model
 
     # Initialize log probability calculator
     use_keys = [k for k, (v1, v2) in tofit_params.items() if v1 == True]
     npar = len(use_keys)
     all_key_list = list(tofit_params.keys())
     log_prob_calculator = LogProbCalculator(alfvar, prloarr, prhiarr, all_prior, use_keys)
-    if run == 'emcee' or run == 'emcee_test':
+    if run == 'emcee':
         pool = mp.get_context("spawn").Pool(
             processes=ncpu, initializer=_init_worker, initargs=(log_prob_calculator,))
         with pool:
@@ -387,7 +443,7 @@ def alf(filename,
             pos_emcee_in = np.zeros(shape=(nwalkers, npar))
             prrange = [10, 10, 0.1, 0.1]
             for i in range(npar):
-                if i < 4:
+                if run_de and i < 4:
                     min_ = max(prloarr[i], np.array(optimize_res_x)[i] - prrange[i])
                     max_ = min(prhiarr[i], np.array(optimize_res_x)[i] + prrange[i])
                     pos_emcee_in[:, i] = np.array([np.random.uniform(min_, max_, nwalkers)])
@@ -398,6 +454,7 @@ def alf(filename,
 
             print(pos_emcee_in[0])
             print(f'Initializing emcee with nwalkers={nwalkers}, npar={npar}')
+            print(f"Fitting parameters: {use_keys}")
             print(f"Shape of initialized positions: {pos_emcee_in.shape}")
             print(f"Mean positions across walkers: {np.nanmean(pos_emcee_in, axis=0)}")
             print(f"Min positions across walkers: {np.nanmin(pos_emcee_in, axis=0)}")
@@ -409,84 +466,21 @@ def alf(filename,
                        prloarr=prloarr))
 
             tstart = time.time()
-            if emcee_save_chains:
-                backends_fname = f"{ALFPY_HOME}results_emcee/backend_{filename}_{tag}.p"
-                backend = emcee.backends.HDFBackend(backends_fname)
-                backend.reset(nwalkers, npar)
+            sampler = emcee.EnsembleSampler(
+            nwalkers, npar, _log_prob_worker, pool=pool)
+            sampler.run_mcmc(pos_emcee_in, nburn + nmcmc, progress=True)
 
-            # ---------------------------------------------------------------- #
-            if run == 'emcee':
-                # Run emcee
-                sampler = emcee.EnsembleSampler(
-                nwalkers, npar, _log_prob_worker, pool=pool)
-                sampler.run_mcmc(pos_emcee_in, nburn + nmcmc, progress=True)
-
-                # Save results
-                print(f'mean acc fraction {np.nanmean(sampler.acceptance_fraction):.3f}')
-                ndur = time.time() - tstart
-                print(f'\n Total time for emcee {ndur/60:.2f}min')
-                res = sampler.get_chain(discard = nburn)
-                prob = sampler.get_log_prob(discard = nburn)
-
-            # ---------------------------------------------------------------- #
-            elif run == 'emcee_test':
-                sampler = emcee.EnsembleSampler(nwalkers, npar, log_prob_calculator.log_prob,
-                                            moves=[emcee.moves.StretchMove(a=1.5)],
-                                            backend=backend)
-                old_tau = np.inf
-                converged = False
-                for j, sample in enumerate(sampler.sample(pos_emcee_in, iterations=60000, progress=True)):
-                    it = j+1
-                    if it%100: continue
-                    ndur = (time.time() - tstart)/60
-                    # use the tau (without discarding) to determine how much to remove
-                    tau = sampler.get_autocorr_time(discard=int(np.max(old_tau)) if \
-                                                np.all(np.isfinite(old_tau)) else 0,
-                                                tol=0)
-
-                    print(f'iter = {it}, ' +
-                      f"tau = {np.max(tau):.0f}, " +
-                      f"acceptance fraction = {sampler.acceptance_fraction.mean():.2f}, " +
-                      f"dtau = {np.max((tau-old_tau)/tau):.2f}, " +
-                      f"it/tau = {np.min(it/tau):.1f}, "+
-                      f"time={ndur:.2f}min",
-                      flush=True)
-
-                    converged = np.all(tau * 20 < it)
-                    converged &= np.all((tau-old_tau)/tau < 0.01)
-                    old_tau = tau
-
-                    if converged: break
-                    if it % 1000:  continue
-                samples = sampler.get_chain(thin=int(np.max(tau) / 2))
-                fig, axes = plt.subplots(npar, figsize=(10, 20), sharex=True)
-                for i in range(samples.shape[2]):
-                    ax = axes[i]
-                    ax.plot(samples[:, :, i], "k", alpha=0.3)
-                    ax.set_ylabel(use_keys[i])
-                    ax.yaxis.set_label_coords(-0.1, 0.5)
-                axes[-1].set_xlabel("step number")
-                fig.savefig(f'{ALFPY_HOME}results_emcee/check_chains_{filename}_{tag}.png',
-                            dpi=100, bbox_inches="tight")
-                fig.clf()
-                del fig
-
-                ndur = time.time() - tstart
-                print('\n Total time for emcee {:.2f}min'.format(ndur/60))
-                prob = sampler.get_log_prob(discard=int(5 * np.max(tau)), thin=int(np.max(tau) / 2))
-                res = sampler.get_chain(discard=int(5 * np.max(tau)), thin=int(np.max(tau) / 2))
-
-
+            print(f'mean acc fraction {np.nanmean(sampler.acceptance_fraction):.3f}')
+            ndur = time.time() - tstart
+            print(f'\n Total time for emcee {ndur/60:.2f}min')
+            res = sampler.get_chain(discard = nburn)
+            prob = sampler.get_log_prob(discard = nburn)
 
             pickle.dump(res, open(f'{ALFPY_HOME}results_emcee/res_emcee_{filename}_{tag}.p', "wb"))
             pickle.dump(prob, open(f'{ALFPY_HOME}results_emcee/prob_emcee_{filename}_{tag}.p', "wb"))
+            print('writing emcee outputs and M/L columns...')
+            _save_emcee_text_outputs(ALFPY_HOME, filename, tag, alfvar, use_keys, res, prob, prloarr, prhiarr, nwalkers, nburn, nmcmc, ncpu, np.nanmean(sampler.acceptance_fraction), ndur, pool=pool)
             print('EMCEE run complete.')
-            best_params = res[np.where(prob == prob.max())][0]
-            _, best_mspec = func(alfvar, best_params, use_keys, funit=True)
-            np.savetxt(f'{ALFPY_HOME}results_emcee/bestspec_{filename}_{tag}.dat',
-                       np.transpose(best_mspec),
-                       delimiter="     ",
-                       fmt='   %12.4f   %12.4E   %12.4E   %12.4E   %12.4E   %12.4E')
             pool.close()
     # ---------------------------------------------------------------- #
     elif run == 'dynesty':

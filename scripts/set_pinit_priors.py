@@ -98,7 +98,7 @@ def set_pinit_priors(imf_type=1):
                   'teff': (-50., 50.), 'logfy':(-6.0, -0.1), 'fy_logage': (math.log10(0.5), math.log10(3.0)),
                   'logm7g': (-6., -1.), 'hotteff':(8., 30.), 'loghot':(-6.0, -1.0),
                   'sigma':(10., 1e3), 'sigma2':(10., 1e3), #'chi2':(0, 2e33),
-                  'velz':(-1e3, 1e4), 'velz2':(-1e3, 1e3),
+                  'velz':(-1e3, 1e3), 'velz2':(-1e3, 1e3),
                   'logtrans':(-6., 1.0), 'logemline_h': (-6., 1.0), 'logemline_oii': (-6., 1.0),
                   'logemline_oiii': (-6., 1.0),'logemline_ni': (-6., 1.0), 'logemline_nii': (-6., 1.0),
                   'logemline_sii': (-6., 1.0), 'jitter': (0.1, 10.0), 'logsky':(-9., 2.0), 'h3':(-0.4, 0.4), 'h4':(-0.4, 0.4)
